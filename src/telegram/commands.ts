@@ -98,7 +98,7 @@ export async function handleTailCommand(chatId: number, sessionIdParam?: string 
   }
 
   try {
-    const sD = unwrapSession(await apiRef.client.session.get({ sessionID: sessionId }).catch(() => null));
+    const sD = unwrapSession(await apiRef.client.session.get({ sessionID: sessionId }));
     const title = sD.title || sessionId.slice(0, 8);
 
     const trackingMsg = await bot?.sendMessage(chatId, `📋 <b>Tailing: ${escapeHtml(title)}</b>\n\n⌛ Fetching latest messages...`, {
@@ -114,8 +114,9 @@ export async function handleTailCommand(chatId: number, sessionIdParam?: string 
       inline_keyboard: [[{ text: '❌ Stop Tailing', callback_data: `stop_tracking_${trackingMsg.message_id}` }]]
     }, { chat_id: chatId, message_id: trackingMsg.message_id }).catch(() => {});
 
-    registerMessageSession(trackingMsg.message_id, sessionId, targetDir);
-    startTailTracking(sessionId, chatId, trackingMsg.message_id, targetDir);
+    const sessionDir = sD.location?.directory || sD.directory || targetDir;
+    registerMessageSession(trackingMsg.message_id, sessionId, sessionDir);
+    startTailTracking(sessionId, chatId, trackingMsg.message_id, sessionDir);
   } catch (err) {
     console.error('[Telegram] handleTailCommand error:', err);
     bot?.sendMessage(chatId, "❌ Failed to start tailing. Please make sure the session ID is correct.").catch(() => {});

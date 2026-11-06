@@ -64,10 +64,9 @@ const onNavigate: Handler = async (bot, query) => {
   const sId = targetId === 'home' ? null : targetId;
   const targetDir = getTargetDir();
   try {
-    enqueue({ type: 'navigate', targetDir, sessionId: sId });
     setActiveSessionId(targetDir, sId);
 
-    answer(bot, query, 'Session switched.');
+    answer(bot, query, 'Telegram target selected.');
 
     try {
       const menu = isSessionsMsg ? lastSessionsMessage! : lastHistoryMessage!;
@@ -75,7 +74,7 @@ const onNavigate: Handler = async (bot, query) => {
       refreshKeyboard(bot, menu.chatId, menu.messageId, kb);
     } catch (e) {}
   } catch (e) {
-    answer(bot, query, 'Failed to navigate');
+    answer(bot, query, 'Failed to select Telegram target.');
   }
 };
 

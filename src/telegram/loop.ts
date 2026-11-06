@@ -2,8 +2,8 @@
 // election, and leader-only duties (Telegram bot, error flush, external
 // answer cleanup, menu updates). 1s cadence, reentrancy-guarded.
 //
-// Restart-safe by construction: job claims are durable (no in-memory
-// dedupe), so a TUI restart can never replay a consumed job.
+// Claims and acknowledgements persist across restarts; queue updates are not
+// atomic across processes.
 import {
   apiRef, bot, isLeader, setIsLeader, leaderInterval, setLeaderInterval,
   bindSetup, TelegramConfig,

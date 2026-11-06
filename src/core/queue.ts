@@ -5,14 +5,13 @@
 //  2. in-memory-only `lastSyncTimestamp` dedupe: every TUI (re)start
 //     REPLAYED the stale record (the duplicate-message saga).
 //
-// Jobs are claimed durably (claimedAt/claimedBy) and acked (doneAt), so
-// replays are impossible and nothing is silently lost. Every failure on
-// a user-visible path is reported via reportError -> leader -> Telegram.
+// Claims (claimedAt/claimedBy) and acks (doneAt) are persisted, but unlocked
+// read-modify-write can race across instances; this is not exactly-once delivery.
+// Job execution failures are reported via reportError -> leader -> Telegram.
 import crypto from 'crypto';
 import { apiRef } from './runtime';
 import { storeGet, storeSet } from './store';
-import { workdir, navigateHome, navigateSession } from './ctx';
-import { pendingQuestions, updateCurrentSessionId, buildPromptOpts } from './context';
+import { pendingQuestions, buildPromptOpts } from './context';
 import { answerFlowWithText } from '../telegram/forms';
 import { unwrapSessionId } from './ctx';
 
@@ -57,7 +56,7 @@ export function enqueue(partial: Omit<Job, 'id' | 'createdAt'>): Job {
   return job;
 }
 
-/** Atomically claim this instance's pending jobs. Durable: survives restarts. */
+/** Persist this instance's pending claims; concurrent instances can race. */
 export function claimDue(dir: string, owner: string): Job[] {
   const q = readQueue();
   const due = q.filter((j) => !j.claimedAt && !j.doneAt && j.targetDir === dir);
@@ -109,12 +108,9 @@ export function clearSyncError() {
 // --- Job execution (runs in the owning instance) ---
 
 export async function handleJob(job: Job) {
-  const dir = workdir();
   try {
     if (job.type === 'navigate') {
-      updateCurrentSessionId(job.sessionId);
-      if (job.sessionId === null) navigateHome();
-      else navigateSession(job.sessionId);
+      // Legacy navigation jobs must not take over a terminal's current view.
       return;
     }
     if (job.type === 'prompt' && job.sessionId) {
@@ -128,22 +124,18 @@ export async function handleJob(job: Job) {
       } catch (e) {
         reportError('answer form', e);
       }
-      updateCurrentSessionId(job.sessionId);
-      navigateSession(job.sessionId);
-      await apiRef?.client?.session?.prompt(buildPromptOpts(job.sessionId, job.text || ''));
+      await apiRef.client.session.prompt(buildPromptOpts(job.sessionId, job.text || ''));
       return;
     }
     if (job.type === 'prompt' && !job.sessionId) {
-      const created: any = await apiRef?.client?.session?.create({ location: { directory: dir } });
+      const created: any = await apiRef.client.session.create({ location: { directory: job.targetDir } });
       const newId = unwrapSessionId(created);
       if (!newId) throw new Error('session.create returned no id');
-      updateCurrentSessionId(newId);
-      navigateSession(newId);
-      await apiRef?.client?.session?.prompt(buildPromptOpts(newId, job.text || ''));
+      await apiRef.client.session.prompt(buildPromptOpts(newId, job.text || ''));
       return;
     }
     if (job.type === 'model_change' && job.sessionId) {
-      await apiRef?.client?.session?.switchModel?.({
+      await apiRef.client.session.switchModel({
         sessionID: job.sessionId,
         model: { id: job.modelID, providerID: job.providerID },
       });

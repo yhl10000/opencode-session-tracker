@@ -6,6 +6,7 @@ import util from 'util';
 import { DAY_MS, groupByParent, isListableSession, updatedAt } from '../sessions';
 import { apiRef, activeProjectDir } from '../core/runtime';
 import { readState } from '../core/store';
+import { getActiveSessionId, hasActiveSessionSelection } from '../core/context';
 import { readActiveProjects } from '../core/leader';
 import { getArchivedSessions, readSavedStatuses, saveSessionStatus } from '../core/status';
 import { isHeartbeatFresh } from '../core/leader';
@@ -207,13 +208,12 @@ export async function getSessionsKeyboard(showHistory: boolean = false) {
       return (b.time?.updated || 0) - (a.time?.updated || 0);
     });
 
-  let currentActive: string | null = null;
-  try { currentActive = readState().activeSessions?.[queryDir] || null; } catch (e) {}
+  const currentActive = getActiveSessionId(queryDir);
 
   const inlineKeyboard: any[][] = [];
 
   if (!showHistory) {
-    inlineKeyboard.push([{ text: `${currentActive === null ? '→ ' : ''}🏠 Home (New Session)`, callback_data: "nav_home" }]);
+    inlineKeyboard.push([{ text: `${hasActiveSessionSelection(queryDir) && currentActive === null ? '→ ' : ''}🏠 Home (New Session)`, callback_data: "nav_home" }]);
   }
 
   filteredParents.slice(0, MAX_SESSION_BUTTONS).forEach(p => {

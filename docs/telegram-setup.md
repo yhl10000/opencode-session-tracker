@@ -47,8 +47,16 @@ Add the following content (replace with your token and user ID):
 Once configured, the plugin automatically spawns the Telegram bot in the background when you start OpenCode. 
 
 * **Leader Lock:** If you have multiple TUI windows open, only one window (the "leader") runs the Telegram bot listener to avoid API polling conflicts.
-* **Auto-Routing:** When you send a prompt from Telegram, it is automatically routed to the TUI window of the active project. If you select a session in another window, that window immediately navigates to it and runs the prompt locally.
+* **Session-ID Routing:** Telegram selects its own target session and sends prompts directly through the connected OpenCode server. Selecting or messaging session B does not navigate a terminal displaying A; a terminal already showing B receives its normal session updates.
 * **Status Cache:** All logs and temporary synchronization data are safely stored in `~/.cache/opencode-session-tracker/`.
+
+## Selecting a Session
+
+Choose a project with `/projects`, then use `/sessions` to select an existing session or **New Session**. The first time you use this version, select the Telegram target again: the old terminal-derived selection is intentionally not reused. Without an explicit selection, the bot asks you to choose instead of guessing which tab you meant.
+
+Telegram selection does not change Windows Terminal focus, tab titles or the conversation displayed in any terminal. Terminal sidebar clicks still navigate that terminal normally. Replying to a Telegram message sends that interaction to the message's bound session without changing your default Telegram target.
+
+A session does not need to be displayed in a terminal to receive a prompt, but it must be reachable on the bot's connected OpenCode server. If delivery fails, the bot reports the error; it does not switch a terminal or fall back to another session.
 
 ## Permission Reminders
 

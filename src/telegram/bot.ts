@@ -22,10 +22,10 @@ import { handleModelsCommand } from './models';
 import { answerQuestionFlow, findFlow } from './forms';
 import {
   pendingQuestions, getTargetDir, getActiveSessionId, setActiveSessionId,
-  buildPromptOpts, updateCurrentSessionId,
+  buildPromptOpts, hasActiveSessionSelection,
 } from '../core/context';
-import { navigateSession, unwrapSessionId, workdir } from '../core/ctx';
-import { enqueue, reportError } from '../core/queue';
+import { unwrapSessionId } from '../core/ctx';
+import { reportError } from '../core/queue';
 
 export function stopTelegramBot() {
   if (bot) {
@@ -128,7 +128,7 @@ export function lastNotify(): NotifyResult | null {
 
 // --- Incoming ---
 
-async function onMessage(b: TelegramBot, msg: TelegramBot.Message) {
+export async function onMessage(b: TelegramBot, msg: TelegramBot.Message) {
   try {
     if (!msg.from || !allowedUsers.includes(msg.from.id) || !msg.text) return;
     const text = msg.text.trim();
@@ -176,18 +176,9 @@ async function handleRecapCommand(chatId: number) {
   await sendRecap(chatId, undefined, currentActive);
 }
 
-/**
- * Sends the prompt to the session: directly when this instance owns the
- * directory, otherwise as a durable queue job for the owning instance.
- * Throws on local failure so the caller can tell the user.
- */
-async function dispatchPrompt(sessionId: string, targetDir: string, text: string) {
-  if (targetDir === workdir()) {
-    navigateSession(sessionId);
-    await apiRef.client.session.prompt(buildPromptOpts(sessionId, text));
-  } else {
-    enqueue({ type: 'prompt', targetDir, sessionId, text });
-  }
+/** Sends directly by SID through the shared server, without changing any TUI. */
+async function dispatchPrompt(sessionId: string, text: string) {
+  await apiRef.client.session.prompt(buildPromptOpts(sessionId, text));
 }
 
 /** Stops live tails of a session so a fresh reply-mode stream can start. */
@@ -203,18 +194,10 @@ async function handleIncomingText(
   userMsgId?: number,
 ) {
   const targetDir = replyDir || getTargetDir();
-  let currentActive: string | null;
-
-  if (replySessionId && replyDir) {
-    currentActive = replySessionId;
-    updateCurrentSessionId(replySessionId);
-    try {
-      setActiveSessionId(replyDir, replySessionId);
-    } catch {}
-  } else if (replySessionId) {
-    currentActive = replySessionId;
-  } else {
-    currentActive = getActiveSessionId(targetDir);
+  const currentActive = replySessionId || getActiveSessionId(targetDir);
+  if (!replySessionId && !hasActiveSessionSelection(targetDir)) {
+    await bot?.sendMessage(chatId, '⚠️ Use /sessions to select an existing session or Home (New Session).').catch(() => {});
+    return;
   }
 
   // A pending question for this session takes the text as its answer.
@@ -240,7 +223,7 @@ async function handleIncomingText(
   if (currentActive) {
     registerMessageSession(tailMsgId, currentActive, targetDir);
     try {
-      await dispatchPrompt(currentActive, targetDir, text);
+      await dispatchPrompt(currentActive, text);
     } catch (e: any) {
       reportError('send prompt', e);
       bot?.sendMessage(chatId, `❌ Failed to send prompt: ${escapeHtml(e?.message || e)}`).catch(() => {});
@@ -257,11 +240,10 @@ async function handleIncomingText(
       bot?.sendMessage(chatId, '❌ Could not create a session.').catch(() => {});
       return;
     }
-    updateCurrentSessionId(newSessionId);
     setActiveSessionId(targetDir, newSessionId);
     registerMessageSession(tailMsgId, newSessionId, targetDir);
     try {
-      await dispatchPrompt(newSessionId, targetDir, text);
+      await dispatchPrompt(newSessionId, text);
     } catch (e: any) {
       reportError('send prompt', e);
       bot?.sendMessage(chatId, `❌ Failed to send prompt: ${escapeHtml(e?.message || e)}`).catch(() => {});

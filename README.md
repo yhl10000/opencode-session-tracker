@@ -12,7 +12,7 @@
 
 </div>
 
-One session tracker for [OpenCode](https://github.com/sst/opencode), two surfaces: a **TUI sidebar** in your terminal and a **Telegram remote control** on your phone. Both stay in sync automatically — pick up a session in one place, and it's right where you left it in the other.
+One session tracker for [OpenCode](https://github.com/sst/opencode), two surfaces: a **TUI sidebar** in your terminal and a **Telegram remote control** on your phone. Both show the same sessions and live status, while Telegram's selected target stays independent of the conversation open in each terminal.
 
 <p align="center">
   <img src="docs/tui1.png" width="400" alt="OpenCode Session Tracker Sidebar" />
@@ -26,7 +26,7 @@ One session tracker for [OpenCode](https://github.com/sst/opencode), two surface
 * **Session hierarchies.** Subagents nest under their parent session like folders. Toggle `[+]`/`[-]` to expand or collapse; active subagents pop out automatically even while their parent is collapsed.
 * **Live status everywhere.** The same status — running, waiting, idle, asking a question, waiting on a permission — is reflected as a colored tag in the sidebar and as a live-updating message in Telegram.
 * **Remote control from your phone.** Send prompts, follow your agent's updates and answers, and respond to pending permission requests and interactive questions — all via Telegram buttons, without touching your keyboard.
-* **Cross-window / cross-project routing.** Multiple OpenCode windows are tracked together. Telegram routes prompts to the correct project's terminal window and follows you as you switch sessions.
+* **Independent remote targeting.** Select a session in Telegram to send prompts or follow replies without switching or focusing any terminal tab, even when several tabs share a directory.
 * **Instance management from Telegram.** List running projects, launch OpenCode in a project that isn't running, or close/restart the current instance — all from `/projects`.
 * **History, your way.** Sessions idle for 24h automatically move to History. Don't want to wait? Cmd+click (Alt+click on Windows/Linux) a session in the sidebar to archive it to History immediately.
 
@@ -63,7 +63,7 @@ Live prompt tracking — follow assistant updates and session status, with butto
 * **Interactive Questions:** Answer questions directly via Telegram buttons, independently of `/tail`.
 * **Session & History Browsing:** `/sessions` lists everything currently active; `/history` lists everything archived — exactly matching what the sidebar shows.
 * **Project Control:** `/projects` lists every known OpenCode project, shows which are online, and lets you launch, close, or restart an instance remotely.
-* **Cross-Process Routing:** Multi-window support automatically syncs session views and routes prompts to the correct terminal window.
+* **Session-ID Routing:** Prompts go directly to the selected session on the shared OpenCode server. Each terminal keeps its own current conversation and focus.
 * **Zero Overhead:** Idle-state polling is fully cached and throttled to respect Telegram rate limits.
 
 > [!TIP]

@@ -44,10 +44,10 @@ export function getTargetDir(): string {
   return activeProjectDir || '';
 }
 
-/** Active session id for a directory (defaults to the current target dir). */
+/** Explicit Telegram selection for a directory, independent of the TUI view. */
 export function getActiveSessionId(dir: string = getTargetDir()): string | null {
   try {
-    return storeGet<Record<string, string | null>>('activeSessions', {})[dir] || null;
+    return storeGet<Record<string, string | null>>('telegramActiveSessions', {})[dir] || null;
   } catch {
     return null;
   }
@@ -55,10 +55,18 @@ export function getActiveSessionId(dir: string = getTargetDir()): string | null 
 
 export function setActiveSessionId(dir: string, sessionId: string | null) {
   try {
-    const all = storeGet<Record<string, string | null>>('activeSessions', {});
+    const all = storeGet<Record<string, string | null>>('telegramActiveSessions', {});
     all[dir] = sessionId;
-    storeSet('activeSessions', all);
+    storeSet('telegramActiveSessions', all);
   } catch {}
+}
+
+export function hasActiveSessionSelection(dir: string = getTargetDir()): boolean {
+  try {
+    return Object.prototype.hasOwnProperty.call(storeGet('telegramActiveSessions', {}), dir);
+  } catch {
+    return false;
+  }
 }
 
 export function getSelectedModelRef(): { providerID: string; modelID: string } | undefined {

@@ -119,7 +119,7 @@ describe('permission reminders', () => {
     expect(h.sent).toHaveLength(0);
     h.lifecycle.asked(request('p2'));
     h.pending([]);
-    await wait();
+    await waitFor(() => h.requests.entries().length === 0, 'authoritative removal of the resolved request');
     expect(h.sent).toHaveLength(0);
     expect(h.requests.entries()).toHaveLength(0);
   });

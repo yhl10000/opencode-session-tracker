@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+// request-promise clears Bun's module cache; load it before application modules.
+import 'node-telegram-bot-api';
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'session-tracker-tests-'));
 process.env.HOME = home;

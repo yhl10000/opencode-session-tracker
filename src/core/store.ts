@@ -119,7 +119,7 @@ export function createStore<V>(key: string) {
 // --- Legacy-compatible whole-state access (transitional) ---
 
 const KNOWN_KEYS = [
-  'statuses', 'sessionModels', 'sessionAgents', 'activeSessions',
+  'statuses', 'sessionModels', 'sessionAgents', 'activeSessions', 'telegramActiveSessions',
   'messageSessions', 'permissionRequests', 'pendingQuestions', 'qfMap',
   'archivedSessions', 'projectStatusOverrides', 'telegramStatus',
   'syncError', 'lastNotify', 'menuUpdateTimestamp', 'queue', 'queueErrors',
