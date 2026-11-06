@@ -28,6 +28,10 @@ export function escapeHtml(text: string): string {
   return cleanAndConvert(escaped);
 }
 
+function escapePlainHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export function formatThinkingText(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return '';
@@ -129,37 +133,60 @@ export function formatToolLine(name: string, input: any, status: string | undefi
   return statusIcon ? `${prefix} ${statusIcon}` : prefix;
 }
 
-export function buildStatusFromParts(parts: any[]): string {
-  const lines: string[] = [];
+function escapedCharLength(char: string): number {
+  return char === '&' ? 5 : char === '<' || char === '>' ? 4 : char.length;
+}
 
-  for (const p of (parts || []).filter(p => p.type !== 'text')) {
-    if (p.type === 'reasoning') {
-      const text = (p.text || '').trim();
-      if (text) {
-        lines.push(`🧠 <i>Thinking: ${escapeHtml(formatThinkingText(text))}</i>`);
-      }
-    } else if (p.type === 'tool' || p.type === 'tool_call') {
-      const name = p.tool || p.name || '';
-      const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
-      // question/ask tools are sent as separate interactive Telegram messages by notifyTelegramQuestion
-      // — just show a static indicator here, don't parse the object input
-      if (QUESTION_TOOLS.has(name.toLowerCase())) {
-        lines.push(`❓ <code>Question asked</code> ${STATUS_ICONS[status] || '✅'}`);
-      } else {
-        lines.push(formatToolLine(name, p.state?.input ?? p.input ?? {}, status));
-      }
+function escapedLength(text: string): number {
+  let length = 0;
+  for (const char of text) length += escapedCharLength(char);
+  return length;
+}
+
+function takeEscapedPrefix(text: string, budget: number): { text: string; cost: number } {
+  const chars: string[] = [];
+  let cost = 0;
+  for (const char of text) {
+    const nextCost = escapedCharLength(char);
+    if (cost + nextCost > budget) break;
+    chars.push(char);
+    cost += nextCost;
+  }
+  return { text: chars.join(''), cost };
+}
+
+/** Keeps the newest complete paragraphs, including the final one, before HTML conversion. */
+export function formatAssistantProse(text: string, maxLength = 2700): string {
+  const paragraphs = text.trim().split(/\n\s*\n/).filter(Boolean);
+  const selected: string[] = [];
+  let remaining = maxLength;
+  let omitted = false;
+  for (let i = paragraphs.length - 1; i >= 0 && remaining > 0; i--) {
+    const paragraph = paragraphs[i].trim();
+    const cost = escapedLength(paragraph);
+    const separatorCost = selected.length ? 2 : 0;
+    const omissionReserve = selected.length ? 3 : 0;
+    if (cost + separatorCost + omissionReserve <= remaining) {
+      selected.unshift(paragraph);
+      remaining -= cost + separatorCost;
+      continue;
     }
+    if (!selected.length && i === paragraphs.length - 1) {
+      const needsOmissionMarker = i > 0;
+      const prefix = takeEscapedPrefix(paragraph, Math.max(0, remaining - (needsOmissionMarker ? 4 : 1)));
+      if (prefix.text) selected.push(`${prefix.text.trimEnd()}…`);
+      omitted = needsOmissionMarker;
+    } else {
+      omitted = true;
+    }
+    break;
   }
+  const body = selected.join('\n\n');
+  return escapePlainHtml(omitted ? `…\n\n${body}` : body);
+}
 
-  const textContent = (parts || []).filter(p => p.type === 'text').map(p => p.text || '').join('').trim();
-  if (textContent) {
-    const esc = escapeHtml(textContent);
-    lines.push(esc.length > 3000
-      ? `${esc.slice(0, 300)}\n\n... <i>(truncated)</i> ...\n\n${esc.slice(-2650)}`
-      : esc);
-  }
-
-  return lines.join('\n\n').trim();
+export function buildStatusFromParts(parts: any[], maxLength = 2700): string {
+  return formatAssistantProse((parts || []).filter(p => p.type === 'text').map(p => p.text || '').join('').trim(), maxLength);
 }
 
 const MAX_MESSAGE_SESSIONS = 200;
@@ -216,7 +243,7 @@ export async function buildMessageWithHeaderAndFooter(
     const sRes: any = await apiRef.client.session.get({ sessionID: sessionId });
     sessionTitle = (sRes && typeof sRes.id === 'string' ? sRes : sRes?.data)?.title || '';
   } catch (e) {}
-  const header = sessionTitle ? `📌 <b>${escapeHtml(sessionTitle)}</b>\n\n` : '';
+  const header = sessionTitle ? `📌 <b>${escapePlainHtml(sessionTitle.slice(0, 60))}</b>\n\n` : '';
 
   // v2 assistant messages carry agent/model/tokens/cost at top level (v1 nested under .info).
   const info = lastAssistant?.info || lastAssistant || {};
@@ -240,7 +267,7 @@ export async function buildMessageWithHeaderAndFooter(
   if (info?.cost > 0) metaParts.push(`$${info.cost.toFixed(2)}`);
   */
 
-  const footer = `\n\n<i>${metaParts.join(' · ')}</i>`;
+  const footer = `\n\n<i>${escapePlainHtml(metaParts.join(' · ').slice(0, 70))}</i>`;
   return `${header}${bodyText}${footer}`;
 }
 

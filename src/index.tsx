@@ -9,13 +9,12 @@ import {
   savePromptResponse,
   updatePromptResponseMeta,
   registerQuestionRequest,
-  registerPermissionRequest,
   notifyTelegramQuestion,
-  notifyTelegram,
   logDebug
 } from "./telegram";
-import { localRunStatus, localSessionTitle, pendingForms, pendingPermissions } from "./core/ctx";
-import { pendingQuestions, permissionRequests, qfMap } from "./core/context";
+import { localRunStatus, localSessionTitle } from "./core/ctx";
+import { pendingQuestions, qfMap } from "./core/context";
+import { startPermissionReminders } from "./telegram/permissions";
 import { leaderInterval, setLeaderInterval } from "./core/runtime";
 import { computeStatus, reconcileStaleStatuses } from "./core/status";
 import { getStatusSignal } from "./tui/signals";
@@ -62,6 +61,8 @@ export default Plugin.define({
     } catch (e: any) {
       console.error("Telegram init error:", e);
     }
+    const permissions = startPermissionReminders(ctx);
+    const unsubscribe: (() => void)[] = [];
 
     const updateStatusSafe = (sessionID: string, baseType?: string) => {
       if (!sessionID) return;
@@ -74,13 +75,14 @@ export default Plugin.define({
     // v2 events arrive as { type, data, ... }; unwrap once here.
     const onEvent = (name: string, handler: (payload: any) => void) => {
       try {
-        (ctx.data.on as any)(name, (e: any) => {
+        const off = (ctx.data.on as any)(name, (e: any) => {
           try {
             handler(e?.data ?? e?.properties ?? e);
           } catch (err) {
             console.error(`[session-tracker] event handler error (${name}):`, err);
           }
         });
+        if (typeof off === 'function') unsubscribe.push(off);
       } catch (err) {
         console.error(`[session-tracker] failed to subscribe to ${name}:`, err);
       }
@@ -120,6 +122,31 @@ export default Plugin.define({
       meta.textBuf = '';
       sessionMeta.set(sId, meta);
     };
+
+    const userInbox = new Set<string>();
+    const inboxKey = (sessionID: string, inboxID: string) => JSON.stringify([sessionID, inboxID]);
+    for (const session of ctx.data.session.list()) {
+      for (const item of ctx.data.session.pending.list(session.id)) {
+        if (item.type === "user") userInbox.add(inboxKey(session.id, item.id));
+      }
+    }
+
+    onEvent("session.inbox.enqueued", (payload) => {
+      if (payload?.sessionID && payload?.inboxID && payload?.item?.type === "user") {
+        userInbox.add(inboxKey(payload.sessionID, payload.inboxID));
+      }
+    });
+
+    onEvent("session.inbox.delivered", (payload) => {
+      const sId = payload?.sessionID;
+      if (!sId || !payload?.inboxID || !userInbox.delete(inboxKey(sId, payload.inboxID))) return;
+      sessionMeta.delete(sId);
+      savePromptStatus(sId, '⏳ Processing...', 'reset');
+    });
+
+    onEvent("session.inbox.cancelled", (payload) => {
+      userInbox.delete(inboxKey(payload?.sessionID, payload?.inboxID));
+    });
 
     onEvent("session.step.started", (payload) => {
       const sId = payload?.sessionID;
@@ -178,7 +205,7 @@ export default Plugin.define({
       const buf = (meta.textBuf || '') + delta;
       meta.textBuf = buf;
       sessionMeta.set(sId, meta);
-      savePromptStatus(sId, buf.length > 600 ? '...' + buf.slice(-600) : buf);
+      savePromptStatus(sId, buf, 'prose');
     });
 
     onEvent("session.text.ended", (payload) => {
@@ -196,7 +223,6 @@ export default Plugin.define({
       if (meta.stepStartTime) info.duration = Math.round((Date.now() - meta.stepStartTime) / 1000);
 
       savePromptResponse(sId, text, info);
-      savePromptStatus(sId, '✅ Done');
     });
 
     onEvent("session.step.ended", (payload) => {
@@ -239,22 +265,12 @@ export default Plugin.define({
     onEvent("permission.asked", (payload) => {
       if (!payload?.sessionID) return;
       updateStatusSafe(payload.sessionID, "perm");
-      const permId = payload.id;
-      const shortId = registerPermissionRequest(payload.sessionID, permId);
-      const title = localSessionTitle(payload.sessionID) || payload.sessionID.slice(0, 8);
-      const desc = payload.message
-        || (payload.action ? `${payload.action}: ${(payload.resources || []).join(', ')}` : 'Approve action?');
-      notifyTelegram(`🔐 **Permission Requested**\nSeans \`${title}\` is asking for permission.\n\n${desc}`.slice(0, 1000), [
-        { text: "✅ Allow", callback_data: `perm_allow_${shortId}` },
-        { text: "❌ Deny", callback_data: `perm_deny_${shortId}` }
-      ]);
+      permissions.asked(payload);
     });
 
     onEvent("permission.replied", (payload) => {
       if (!payload?.sessionID) return;
-      for (const [shortId, req] of permissionRequests.entries()) {
-        if (req.permId === payload.requestID) permissionRequests.delete(shortId);
-      }
+      permissions.replied(payload.sessionID, payload.requestID);
       updateStatusSafe(payload.sessionID, localRunStatus(payload.sessionID) === "running" ? "busy" : "idle");
     });
 
@@ -273,6 +289,10 @@ export default Plugin.define({
     // Clears the loop on plugin hot-reload; setup re-creates it.
     // The Telegram bot itself survives via globalThis (see core/runtime).
     return () => {
+      permissions.dispose();
+      for (const off of unsubscribe) {
+        try { off(); } catch {}
+      }
       try {
         clearInterval(reconcileInterval);
       } catch {}

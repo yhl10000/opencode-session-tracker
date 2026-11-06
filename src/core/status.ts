@@ -88,9 +88,21 @@ export function getPromptStatusPath(sessionId: string): string {
   return path.join(STATE_DIR, `prompt-status-${sessionId}.json`);
 }
 
-export function savePromptStatus(sessionId: string, status: string) {
+export function savePromptStatus(sessionId: string, status: string, kind: 'activity' | 'prose' | 'reset' = 'activity') {
   try {
-    fs.writeFileSync(getPromptStatusPath(sessionId), JSON.stringify({ status, timestamp: Date.now(), isComplete: false }));
+    const fp = getPromptStatusPath(sessionId);
+    let data: any = {};
+    try { data = JSON.parse(fs.readFileSync(fp, 'utf8')); } catch {}
+    const timestamp = Date.now();
+    delete data.text;
+    if (kind === 'prose') {
+      data.prose = status;
+      data.proseTimestamp = timestamp;
+    } else if (kind === 'reset') {
+      data.prose = '';
+      data.proseTimestamp = 0;
+    }
+    fs.writeFileSync(fp, JSON.stringify({ ...data, status, timestamp, isComplete: false }));
   } catch {}
 }
 
@@ -100,7 +112,8 @@ export function savePromptResponse(
   info?: { title?: string; agent?: string; model?: string; duration?: number; tokens?: number; cost?: number },
 ) {
   try {
-    fs.writeFileSync(getPromptStatusPath(sessionId), JSON.stringify({ text, info, timestamp: Date.now(), isComplete: true }));
+    const timestamp = Date.now();
+    fs.writeFileSync(getPromptStatusPath(sessionId), JSON.stringify({ status: 'completed', text, prose: text, proseTimestamp: timestamp, info, timestamp, isComplete: true }));
   } catch {}
 }
 

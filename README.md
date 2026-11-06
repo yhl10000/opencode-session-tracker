@@ -25,7 +25,7 @@ One session tracker for [OpenCode](https://github.com/sst/opencode), two surface
 * **One session list, everywhere.** Sessions and subagents are tracked in real time and shown identically in the sidebar and in Telegram's `/sessions` and `/history`. Active and archived sessions are always bucketed the same way on both sides.
 * **Session hierarchies.** Subagents nest under their parent session like folders. Toggle `[+]`/`[-]` to expand or collapse; active subagents pop out automatically even while their parent is collapsed.
 * **Live status everywhere.** The same status — running, waiting, idle, asking a question, waiting on a permission — is reflected as a colored tag in the sidebar and as a live-updating message in Telegram.
-* **Remote control from your phone.** Send prompts, follow your agent's thinking and tool calls as they happen, and approve or deny permission requests and interactive questions — all via Telegram buttons, without touching your keyboard.
+* **Remote control from your phone.** Send prompts, follow your agent's updates and answers, and respond to pending permission requests and interactive questions — all via Telegram buttons, without touching your keyboard.
 * **Cross-window / cross-project routing.** Multiple OpenCode windows are tracked together. Telegram routes prompts to the correct project's terminal window and follows you as you switch sessions.
 * **Instance management from Telegram.** List running projects, launch OpenCode in a project that isn't running, or close/restart the current instance — all from `/projects`.
 * **History, your way.** Sessions idle for 24h automatically move to History. Don't want to wait? Cmd+click (Alt+click on Windows/Linux) a session in the sidebar to archive it to History immediately.
@@ -56,10 +56,11 @@ One session tracker for [OpenCode](https://github.com/sst/opencode), two surface
 
 <p align="center">
   <img src="docs/telegram-prompt.png" alt="Telegram Live Prompt Tracking" />
-Live prompt tracking — follow your agent's thinking and tool calls in real-time, with buttons to approve or deny commands.</p>
+Live prompt tracking — follow assistant updates and session status, with buttons to approve or deny pending requests.</p>
 
-* **Live Status Streaming:** Follow your agent's thinking process and tool executions, formatted cleanly, in real-time.
-* **Interactive Approvals:** Answer questions and authorize terminal commands (`allow` or `deny` permissions) directly via Telegram buttons.
+* **Prose-First Tail:** `/tail [sessionId]` keeps assistant updates and answers visible, with a brief activity status instead of reasoning or tool-call logs. No extra model calls are needed.
+* **Pending-Only Approvals:** Permission reminders are checked against the server after a short grace period. Automatically resolved requests stay silent; pending requests are grouped by session with individual approval buttons.
+* **Interactive Questions:** Answer questions directly via Telegram buttons, independently of `/tail`.
 * **Session & History Browsing:** `/sessions` lists everything currently active; `/history` lists everything archived — exactly matching what the sidebar shows.
 * **Project Control:** `/projects` lists every known OpenCode project, shows which are online, and lets you launch, close, or restart an instance remotely.
 * **Cross-Process Routing:** Multi-window support automatically syncs session views and routes prompts to the correct terminal window.
@@ -80,7 +81,7 @@ Install using the official OpenCode plugin command:
 opencode plugin add opencode-session-tracker
 ```
 
-Restart OpenCode, and the sidebar will load automatically. Telegram control activates on top of it as soon as you add a `telegram.json` config — see the [setup guide](docs/telegram-setup.md).
+Run `/reload` in OpenCode to load the plugin. After adding a `telegram.json` config, reload the plugin again to enable Telegram control — see the [setup guide](docs/telegram-setup.md).
 
 ---
 

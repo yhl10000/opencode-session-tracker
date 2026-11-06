@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { bot, apiRef } from '../core/runtime';
-import { getPromptStatusPath } from '../core/status';
-import { buildMessageWithHeaderAndFooter, buildStatusFromParts, escapeHtml, formatDuration, toMs } from './formatters';
+import { computeStatus, getPromptStatusPath } from '../core/status';
+import { buildMessageWithHeaderAndFooter, buildStatusFromParts, formatDuration, toMs } from './formatters';
 import { localRunStatus, unwrapSessionList, sortMessagesAsc } from '../core/ctx';
 
 export interface TailTracking {
@@ -27,15 +27,15 @@ const EXPIRY_MS = 30 * 60 * 1000;
 const roleOf = (m: any): string => m.type || (m.info || m).role;
 
 /** Text of the last prompt status file written by the plugin, if any. */
-function readLiveStatus(sessionId: string): string {
+function readLiveStatus(sessionId: string): { prose: string; proseTimestamp: number } {
   const statusFile = getPromptStatusPath(sessionId);
-  if (!fs.existsSync(statusFile)) return '';
+  if (!fs.existsSync(statusFile)) return { prose: '', proseTimestamp: 0 };
   try {
     const data = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
-    if (data.isComplete) return data.text || '';
-    return data.status || '';
-  } catch (e) {
-    return '';
+    const prose = data.prose || (data.isComplete ? data.text : '') || '';
+    return { prose, proseTimestamp: data.proseTimestamp || (data.isComplete ? data.timestamp : 0) || 0 };
+  } catch {
+    return { prose: '', proseTimestamp: 0 };
   }
 }
 
@@ -54,41 +54,54 @@ export async function getSessionActiveContent(
   directory: string
 ): Promise<{
   activeText: string;
+  activityText: string;
   lastAssistant: any;
   statusType: string;
   historyMsgs: any[];
   lastMsgIsAssistant: boolean;
   calculatedDurationStr?: string;
+  proseTimestamp?: number;
 }> {
-  const msgsRes = await apiRef.client.message.list({ sessionID: sessionId, limit: 10, order: "desc" }).catch(() => null);
-  // Newest-10 window, normalized to ascending; all logic below assumes asc.
+  const msgsRes = await apiRef.client.message.list({ sessionID: sessionId, limit: 50, order: "desc" }).catch(() => null);
   const msgs = sortMessagesAsc(unwrapSessionList(msgsRes));
 
-  // v2 has no session.status client method — the local store tracks run state.
+  const latestUserIndex = msgs.findLastIndex(m => roleOf(m) === 'user');
+  const latestUser = latestUserIndex >= 0 ? msgs[latestUserIndex] : null;
   const rawStatus = localRunStatus(sessionId);
-  const statusType = rawStatus === 'running' ? 'busy' : rawStatus;
+  const statusType = computeStatus(sessionId, rawStatus === 'running' ? 'busy' : rawStatus);
 
   let lastAssistant: any = null;
-  let historyMsgs = msgs;
+  let historyMsgs = latestUser ? [latestUser] : [];
   let lastMsgIsAssistant = false;
 
-  if (msgs.length > 0) {
-    if (roleOf(msgs[msgs.length - 1]) === 'assistant') {
-      lastAssistant = msgs[msgs.length - 1];
-      historyMsgs = msgs.slice(0, -1);
-      lastMsgIsAssistant = true;
-    } else {
-      lastAssistant = [...msgs].reverse().find(m => roleOf(m) === 'assistant') || null;
-    }
-  }
+  if (msgs.length > 0) lastMsgIsAssistant = roleOf(msgs[msgs.length - 1]) === 'assistant';
+
+  const currentTurnAssistants = msgs.slice(latestUserIndex + 1).filter(m => roleOf(m) === 'assistant');
+  lastAssistant = currentTurnAssistants[currentTurnAssistants.length - 1] || null;
 
   const calculatedDurationStr = lastAssistant ? computeAssistantDuration(msgs, lastAssistant) : '';
+  const live = readLiveStatus(sessionId);
+  const latestUserTime = toMs(latestUser?.time?.created || latestUser?.timeCreated);
+  const liveProseIsCurrent = !!live.prose && (!latestUser || (!!latestUserTime && live.proseTimestamp >= latestUserTime));
+  let apiProse = '';
+  let apiProseTimestamp = 0;
+  for (const assistant of [...currentTurnAssistants].reverse()) {
+    apiProse = buildStatusFromParts(assistant.content || assistant.parts || []);
+    if (!apiProse) continue;
+    apiProseTimestamp = toMs(assistant.time?.completed || assistant.time?.updated || assistant.timeUpdated || assistant.time?.created || assistant.timeCreated);
+    break;
+  }
+  const useLiveProse = liveProseIsCurrent && (!apiProse || (apiProseTimestamp > 0 && live.proseTimestamp > apiProseTimestamp));
+  const activeText = useLiveProse ? buildStatusFromParts([{ type: 'text', text: live.prose }]) : apiProse;
+  const proseTimestamp = useLiveProse ? live.proseTimestamp : apiProseTimestamp;
 
-  const fallbackText = statusType === 'idle' ? '✅ Done' : '⏳ Processing...';
-  const activeText = readLiveStatus(sessionId)
-    || (lastAssistant ? buildStatusFromParts(lastAssistant.content || lastAssistant.parts || []) : fallbackText);
+  const activityText = statusType === 'perm'
+    ? '🔐 Waiting for permission'
+    : statusType === 'ask'
+      ? '❓ Waiting for your answer'
+      : statusType === 'idle' ? '✅ Completed' : '⏳ Working';
 
-  return { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr };
+  return { activeText, activityText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr, proseTimestamp };
 }
 
 export function notifySessionIdle(sessionId: string) {
@@ -125,15 +138,14 @@ function renderHistoryMessage(m: any): { role: string; text: string } {
     return { role, text: buildStatusFromParts(m.content || m.parts || []) };
   }
   // v2 user messages carry `text` directly; fall back to v1 parts parsing.
-  const rawText = String(m.text || (m.content ?? '') || (m.parts || [])
+  const rawText = String(m.text || (typeof m.content === 'string' ? m.content : '') || (m.parts || [])
     .map((p: any) => {
       if (p.type === 'text') return p.text || '';
-      if (p.type === 'tool_result') return p.content || '';
       return '';
     })
     .filter(Boolean)
     .join('\n')).trim();
-  return { role, text: escapeHtml(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText) };
+  return { role, text: buildStatusFromParts([{ type: 'text', text: rawText }], 350) };
 }
 
 const ROLE_ICONS: Record<string, string> = { user: '👤', assistant: '🤖' };
@@ -218,38 +230,23 @@ export function startTailTracking(
   let promptStartedAt: number | null = null;
   let frozenDuration = '';
 
-  const messageCache = new Map<string, { role: string, text: string }>();
-  const messageOrder: string[] = [];
-
   tracking.timer = setInterval(async () => {
     try {
       if (tracking.isComplete) return;
-      const { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr } = await getSessionActiveContent(sessionId, directory);
+      const { activeText, activityText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr, proseTimestamp } = await getSessionActiveContent(sessionId, directory);
       const effectiveStatusType = await resolveEffectiveStatus(sessionId, directory, statusType);
 
-      // Add new history messages to our local cache
-      historyMsgs.forEach((m: any) => {
-        const msgId = m.id || m.requestID || String(m.time?.updated || m.timeUpdated || Math.random());
-        if (messageCache.has(msgId)) return;
-        const rendered = renderHistoryMessage(m);
-        if (rendered.text) {
-          messageCache.set(msgId, rendered);
-          messageOrder.push(msgId);
-        }
-      });
-
-      // Keep only the last 1 message in history (the last user prompt)
-      while (messageOrder.length > 1) {
-        messageCache.delete(messageOrder.shift()!);
-      }
-
-      const formattedHistory = messageOrder
-        .map(id => messageCache.get(id))
-        .filter(Boolean)
-        .map(c => `${ROLE_ICONS[c!.role] || '❓'} ${c!.text}\n\n`)
+      const formattedHistory = historyMsgs
+        .map(renderHistoryMessage)
+        .filter(c => c.text)
+        .map(c => `${ROLE_ICONS[c.role] || '❓'} ${c.text}\n\n`)
         .join('');
 
-      const formattedActive = (effectiveStatusType !== 'idle' || lastMsgIsAssistant) ? `🤖 ${activeText}\n\n` : '';
+      const displayActivity = effectiveStatusType === 'running' && statusType === 'idle' ? '⏳ Working' : activityText;
+      const staleProse = proseTimestamp && Date.now() - proseTimestamp > 30000
+        ? ` · updated ${formatDuration((Date.now() - proseTimestamp) / 1000)} ago` : '';
+      const formattedActive = (effectiveStatusType !== 'idle' || lastMsgIsAssistant || activeText)
+        ? `🤖 ${activeText ? `${activeText}\n\n` : ''}${displayActivity}${staleProse}\n\n` : '';
       const contentText = `${formattedHistory}${formattedActive}`.trim();
 
       if (contentText !== lastFormattedContent || effectiveStatusType !== 'idle') {

@@ -17,6 +17,8 @@ export interface QuestionFlow {
 export interface PermissionRequest {
   sessionId: string;
   permId: string;
+  description?: string;
+  notBefore?: number;
 }
 
 export const permissionRequests = createStore<PermissionRequest>('permissionRequests');

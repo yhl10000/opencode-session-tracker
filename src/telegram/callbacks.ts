@@ -17,7 +17,7 @@ import { getModelsKeyboard } from './models';
 import { sendQuestionMessage, answerQuestionFlow, cancelQuestionFlow, findFlow } from './forms';
 import { permissionRequests, getTargetDir, getActiveSessionId, setActiveSessionId } from '../core/context';
 import { enqueue } from '../core/queue';
-import { pendingPermissions } from '../core/ctx';
+import { permissionResolved, refreshPermissions } from './permissions';
 
 type Query = TelegramBot.CallbackQuery & { message: TelegramBot.Message; data: string };
 type Handler = (bot: TelegramBot, query: Query) => Promise<void> | void;
@@ -205,26 +205,8 @@ const onShowQuestion = withActiveSession((bot, query, sessionId) => {
     return;
   }
 
-  answer(bot, query, 'Resending permission request...');
-  let desc = 'Session needs permission to execute a tool.';
-  try {
-    const p = pendingPermissions(sessionId);
-    if (p && p.length > 0) {
-      const first = p[0];
-      desc = first.message || (first.action ? `${first.action}: ${(first.resources || []).join(', ')}` : desc);
-    }
-  } catch (e) {}
-
-  const shortId = perm[0];
-  bot.sendMessage(query.message.chat.id, `⚠️ **Permission Request**\n\n${escapeHtml(desc)}`, {
-    parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [[
-        { text: '✅ Allow', callback_data: `perm_allow_${shortId}` },
-        { text: '❌ Deny', callback_data: `perm_deny_${shortId}` },
-      ]],
-    },
-  }).catch(() => {});
+  answer(bot, query, 'Checking pending permissions...');
+  refreshPermissions(sessionId);
 });
 
 const onStopTracking: Handler = (bot, query) => {
@@ -269,12 +251,7 @@ const onPermission: Handler = async (bot, query) => {
     });
     answer(bot, query, isAllow ? '✅' : '❌');
     permissionRequests.delete(shortId);
-
-    bot.editMessageText(query.message.text + `\n\n_Decision: ${isAllow ? 'Allowed ✅' : 'Denied ❌'}_`, {
-      chat_id: query.message.chat.id,
-      message_id: query.message.message_id,
-      reply_markup: { inline_keyboard: [] },
-    }).catch(() => {});
+    permissionResolved(req.sessionId, req.permId);
   } catch (e) {
     answer(bot, query, 'Error replying to permission request.');
   }
